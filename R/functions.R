@@ -31,6 +31,13 @@ circ_mean_360 <- function(x, na.rm = FALSE) {
   circ_mean_rad(x / 180 * pi, na.rm = na.rm) / pi * 180
 }
 
+#' @describeIn circ_mean_rad circular mean in a space with an arbitrary period (e.g., 180 or 360)
+#' @param period the period of the circular space (e.g., 180 for line orientations, 360 for compass directions)
+#' @export
+circ_mean <- function(x, period = 360, na.rm = FALSE) {
+  circ_mean_rad(x / period * 2 * pi, na.rm = na.rm) / (2 * pi) * period
+}
+
 #' Differences between angles in different circular spaces
 #'
 #' @param a first angle
@@ -93,6 +100,13 @@ angle_diff_360_90 <- function(a, b) {
   (c + 90) %% 360 - 90
 }
 
+#' @describeIn angle_diff_rad angle difference in a space with an arbitrary period (e.g., 180 or 360)
+#' @param period the period of the circular space (e.g., 180 for line orientations, 360 for compass directions)
+#' @export
+angle_diff <- function(a, b, period = 360) {
+  angle_diff_rad(a / period * 2 * pi, b / period * 2 * pi) / (2 * pi) * period
+}
+
 #' Circular correlation coefficient
 #'
 #' Computes a circular correlation coefficient as defined in Jammalamadaka & SenGupta (2001).
@@ -109,9 +123,10 @@ angle_diff_360_90 <- function(a, b) {
 #' @export
 #'
 #' @examples
-#' requireNamespace("mgcv")
-#' data <- mgcv::rmvn(10000, c(0, 0), V = matrix(c(1, 0.5, 0.5, 1), ncol = 2))
-#' circ_corr(data[, 1], data[, 2])
+#' set.seed(1)
+#' x <- rnorm(1000)
+#' y <- 0.5 * x + sqrt(0.75) * rnorm(1000)
+#' circ_corr(x, y)
 circ_corr <- function(a, b, ill_defined = FALSE, mu = NULL, na.rm = FALSE) {
   if (na.rm) {
     a <- a[!is.na(a)]
@@ -152,8 +167,9 @@ circ_corr <- function(a, b, ill_defined = FALSE, mu = NULL, na.rm = FALSE) {
 #' }
 #' @examples
 #'
+#' set.seed(1)
 #' x <- rnorm(50)
-#' a <- as.vector(circular::rvonmises(50, 0, 5))
+#' a <- rnorm(50, sd = 0.4)
 #' circ_lin_corr(x + a, x)
 circ_lin_corr <- function(circ_x, lin_x, na.rm = FALSE) {
   if (na.rm) {
@@ -172,8 +188,9 @@ circ_lin_corr <- function(circ_x, lin_x, na.rm = FALSE) {
 }
 #' Weighted circular parameters
 #'
-#' @param x vector of values (in radians)
+#' @param x vector of values (in radians, unless `period` is set)
 #' @param w vector of weights
+#' @param period if not `NULL`, the period of the circular space (e.g., 180 or 360); `x` is then converted to radians as `x / period * 2 * pi` and the result is converted back to the same period
 #' @param na.rm a logical value indicating whether NA values should be removed before the computation proceeds
 #'
 #' @return weighted mean of values in the vector
@@ -187,13 +204,21 @@ circ_lin_corr <- function(circ_x, lin_x, na.rm = FALSE) {
 #'
 #' @describeIn weighted_circ_mean weighted circular mean
 
-weighted_circ_mean <- function(x, w, na.rm = FALSE) {
+weighted_circ_mean <- function(x, w, period = NULL, na.rm = FALSE) {
   if (length(w) != length(x)) {
     stop("Weights (w) should have the same length as values (x)")
   }
+  if (!is.null(period)) {
+    x <- x / period * 2 * pi
+  }
 
   sum_w <- sum(w, na.rm = na.rm)
-  atan2(sum(w * sin(x), na.rm = na.rm) / sum_w, sum(w * cos(x), na.rm = na.rm) / sum_w)
+  result <- atan2(sum(w * sin(x), na.rm = na.rm) / sum_w, sum(w * cos(x), na.rm = na.rm) / sum_w)
+
+  if (!is.null(period)) {
+    result <- result / (2 * pi) * period
+  }
+  result
 }
 
 #' @describeIn weighted_circ_mean an alternative way to compute weighted circular mean (the results are the same)
@@ -276,6 +301,13 @@ circ_sd_360 <- function(x, na.rm = FALSE) {
 #' @export
 circ_sd_180 <- function(x, na.rm = FALSE) {
   circ_sd_rad(x / 90 * pi, na.rm = na.rm) / pi * 90
+}
+
+#' @describeIn circ_sd_rad SD of angles in a space with an arbitrary period (e.g., 180 or 360)
+#' @param period the period of the circular space (e.g., 180 for line orientations, 360 for compass directions)
+#' @export
+circ_sd <- function(x, period = 360, na.rm = FALSE) {
+  circ_sd_rad(x / period * 2 * pi, na.rm = na.rm) / (2 * pi) * period
 }
 
 circ_dist <- function(x, y) {
@@ -368,14 +400,23 @@ circ_descr <- function(x, w = NULL, d = NULL, na.rm = FALSE) {
 #' If the `bias_type` is set to `fit`, the function computes the cardinal biases in the following way:
 #' \enumerate{
 #' \item Create two sets of bins, splitting the stimuli vector into bins centered at cardinal and at oblique directions.
-#' \item For each set of bins, fit a nth-degree polynomial for the responses in each bin, optionally allowing the distribution of responses to vary in width as a function of distance to the nearest cardinal (regardless of whether the bins are centered at the cardinal or at the oblique, the width of the response distribution usually increases as the distance to cardinals increase).
+#' \item For each set of bins, fit a penalised spline (P-spline — a regression spline with a roughness
+#' penalty that controls smoothness) for the mean response in each bin. Optionally (see `var_sigma`),
+#' the response variability (SD) is modelled jointly via a log-linear model, allowing the response distribution to vary in 
+#' width as a function of distance to the nearest cardinal (regardless of whether the bins are centered
+#' at the cardinal or at the oblique, the width of the response distribution usually increases as the
+#' distance to cardinals increases).
 #' \item Choose the best-fitting model between the one using cardinal and the one using oblique bins.
+#' \item Optionally (see `reassign_at_boundaries`), reassign observations near bin boundaries to the
+#' bin whose fitted model best describes them, iterating until convergence.
 #' \item Compute the residuals of the best-fitting model - that's your bias-corrected error - and the biases (see below).
 #' }
 #' The bias is computed by flipping the sign of errors when the average predicted error is negative, so, that, for example, if on average the responses are shifted clockwise relative to the true values, the trial-by-trial error would count as bias when it is also shifted clockwise.
 #'
 #' If `bias_type` is set to `obl` or `card`, only one set of bins is used, centred at cardinal or oblique angles, respectively.
 #'
+#' For additional examples see the help vignette:
+#' \code{vignette("cardinal_biases", package = "circhelp")}
 #'
 #' @return If `plots=='return'`, returns the three plots showing the biases
 #' (combined together with [patchwork::wrap_plots()]). Otherwise, returns a list with the following elements:
@@ -394,11 +435,11 @@ circ_descr <- function(x, w = NULL, d = NULL, na.rm = FALSE) {
 #' @references {
 #' \itemize{
 #' \item Chetverikov, A., & Jehee, J. F. M. (2023). Motion direction is represented as a bimodal probability distribution in the human visual cortex. Nature Communications, 14(7634). \doi{10.1038/s41467-023-43251-w}
-#' \item van Bergen, R. S., Ma, W. J., Pratte, M. S., & Jehee, J. F. M. (2015). Sensory uncertainty decoded from visual cortex predicts behavior. Nature Neuroscience, 18(12), 1728–1730. \doi{10.1038/nn.4150}
+#' \item van Bergen, R. S., Ma, W. J., Pratte, M. S., & Jehee, J. F. M. (2015). Sensory uncertainty decoded from visual cortex predicts behavior. Nature Neuroscience, 18(12), 1728-1730. \doi{10.1038/nn.4150}
 #' }
 #' }
 #' @export
-#' @import data.table gamlss
+#' @import data.table
 #' @importFrom MASS rlm
 #' @examples
 #'
@@ -408,6 +449,7 @@ circ_descr <- function(x, w = NULL, d = NULL, na.rm = FALSE) {
 #' ex_data <- Pascucci_et_al_2019_data[observer == 4, ]
 #' remove_cardinal_biases(ex_data$err, ex_data$orientation, plots = "show")
 #'
+#' \donttest{
 #' # Data in motion domain from Bae & Luck (2018, Neuroimage),
 #' # https://osf.io/2h6w9/
 #' ex_data_bae <- Bae_Luck_2018_data[subject_Num == unique(subject_Num)[5], ]
@@ -431,9 +473,10 @@ circ_descr <- function(x, w = NULL, d = NULL, na.rm = FALSE) {
 #'   reassign_at_boundaries = FALSE, poly_deg = 8,
 #'   init_outliers = abs(ex_data_bae$err) > 60
 #' )
+#' }
 #'
 remove_cardinal_biases <- function(err, x, space = "180", bias_type = "fit", plots = "hide", poly_deg = 4, var_sigma = TRUE, var_sigma_poly_deg = 4, reassign_at_boundaries = TRUE, reassign_range = 2, break_points = NULL, init_outliers = NULL, debug = FALSE, do_plots = NULL) {
-  outlier <- dist_to_card <- dist_to_obl <- logLik <- x_var <- min_bp_i <- center_x <- dc_var <- gr_var <- min_boundary_i <- min_boundary_dist <- bin_range <- bin_boundary_left <- bin_boundary_right <- at_the_boundary <- row_i <- likelihood <- dnorm <- pred <- pred_sigma <- new_weight <- i.gr_var <- dist_to_bin_centre <- coef <- predict <- bias <- pred_lin <- be_c <- which_bin <- center_y <- outlier_f <- coef_sigma_int <- . <- coef_sigma_slope <- NULL # due to NSE notes in R CMD check
+  outlier <- dist_to_card <- dist_to_obl <- logLik <- x_var <- min_bp_i <- center_x <- dc_var <- gr_var <- gr_i <- min_boundary_i <- min_boundary_dist <- bin_range <- bin_boundary_left <- bin_boundary_right <- at_the_boundary <- row_i <- likelihood <- dnorm <- pred <- pred_sigma <- new_weight <- i.gr_var <- dist_to_bin_centre <- coef <- predict <- bias <- pred_lin <- be_c <- which_bin <- outlier_f <- coef_sigma_int <- . <- coef_sigma_slope <- NULL # due to NSE notes in R CMD check
 
   if (!(bias_type %in% c("fit", "card", "obl", "custom"))) {
     stop("`bias_type` should be 'fit','card', 'obl', or 'custom'")
@@ -481,9 +524,9 @@ remove_cardinal_biases <- function(err, x, space = "180", bias_type = "fit", plo
   }
 
   if (debug) {
-    cat('N observation per group assuming cardinal bins: \n')
+    cat("N observation per group assuming cardinal bins: \n")
     cat(table(card_groups))
-    cat('N observation per group assuming oblique bins: \n')
+    cat("N observation per group assuming oblique bins: \n")
     cat(table(obl_groups))
   }
   for_fit <- data.table(
@@ -498,16 +541,22 @@ remove_cardinal_biases <- function(err, x, space = "180", bias_type = "fit", plo
   }
   for_fit[, dist_to_card := angle_diff_90(x2, 0)]
   for_fit[, dist_to_obl := angle_diff_90(x, 45)]
-  gam_ctrl <- gamlss::gamlss.control(trace = FALSE)
 
-  if (debug){
+  if (debug) {
     cat("Computing bins to group the data...\n")
   }
   if (bias_type == "fit") {
     if (var_sigma) {
-      sigma_formula <- "~abs(dist_to_card)" # assumes that uncertainty changes linearly as a function of distance to cardinals regardless of the bias direction
-      ll1 <- sum(for_fit[outlier == FALSE, logLik(gamlss::gamlss(err ~ poly(dist_to_card, var_sigma_poly_deg), sigma_formula, .SD, control = gam_ctrl)), by = .(card_groups)]$V1)
-      ll2 <- sum(for_fit[outlier == FALSE, logLik(gamlss::gamlss(err ~ poly(dist_to_obl, var_sigma_poly_deg), sigma_formula, .SD, control = gam_ctrl)), by = .(obl_groups)]$V1)
+      # sigma modelled as abs(dist_to_card) regardless of bias direction
+      ll1 <- sum(for_fit[outlier == FALSE, {
+        fit <- fit_weighted_locscale_normal(err, dist_to_card, rep(1L, .N), poly_deg = var_sigma_poly_deg)
+        list(V1 = if (fit$ok) fit$loglik else -Inf)
+      }, by = .(card_groups)]$V1)
+      ll2 <- sum(for_fit[outlier == FALSE, {
+        X2 <- cbind(1, poly(dist_to_obl, var_sigma_poly_deg, raw = FALSE))
+        fit <- fit_weighted_locscale_normal(err, dist_to_card, rep(1L, .N), x_basis = X2)
+        list(V1 = if (fit$ok) fit$loglik else -Inf)
+      }, by = .(obl_groups)]$V1)
     } else {
       ll1 <- sum(for_fit[outlier == FALSE, logLik(MASS::rlm(err ~ poly(x2, poly_deg))), by = .(card_groups)]$V1)
       ll2 <- sum(for_fit[outlier == FALSE, logLik(MASS::rlm(err ~ poly(x, poly_deg))), by = .(obl_groups)]$V1)
@@ -541,25 +590,24 @@ remove_cardinal_biases <- function(err, x, space = "180", bias_type = "fit", plo
     sprintf("[%.2f, %.2f]", bin_boundaries[i - 1], bin_boundaries[i])
   })
   bin_labels <- factor(bin_labels, levels = bin_labels)
+  dist_to_centers_mat <- sapply(bin_centers, \(cc) angle_diff_fun(x, cc))
 
   for_fit[, x_var := x]
-  get_bin_i <- function(x, bin_centers, bin_width) {
-    within_bin <- sapply(1:length(bin_centers), \(i) abs(angle_diff_fun(x, bin_centers[i])) <= (bin_width[i] / 2))
-    max.col(within_bin, "first")
-  }
-  for_fit[, min_bp_i := get_bin_i(x, bin_centers, bin_width)]
+  for_fit[, min_bp_i := max.col(-abs(dist_to_centers_mat), "first")]
+  for_fit[, row_i := 1:.N]
   for_fit[, center_x := bin_centers[min_bp_i]]
+  for_fit[, gr_i := min_bp_i]
   for_fit[, dc_var := angle_diff_fun(x, center_x)]
   for_fit[, gr_var := bin_labels[min_bp_i]]
 
   if (plots == "show" & debug == TRUE) {
-    p_boundaries <- ggplot(for_fit, aes(x = x, y = err, color = gr_var)) +
+    p_boundaries <- ggplot(for_fit, aes(x = .data$x, y = .data$err, color = .data$gr_var)) +
       geom_point() +
-      geom_vline(xintercept = angle_diff_fun(break_points, 0)) +
-      geom_vline(color = "blue", xintercept = angle_diff_fun(bin_centers, 0))
+      ggplot2::geom_vline(xintercept = angle_diff_fun(break_points, 0)) +
+      ggplot2::geom_vline(color = "blue", xintercept = angle_diff_fun(bin_centers, 0))
     print(p_boundaries)
   }
-  for_fit[, min_boundary_i := apply(sapply(break_points, \(bp) abs(angle_diff_fun(x, bp))), 1, which.min)]
+  for_fit[, min_boundary_i := max.col(-abs(sapply(break_points, \(bp) angle_diff_fun(x, bp))), "first")]
 
   for_fit[, min_boundary_dist := angle_diff_fun(x, break_points[min_boundary_i])]
   for_fit[, bin_range := bin_width[min_bp_i]]
@@ -576,21 +624,42 @@ remove_cardinal_biases <- function(err, x, space = "180", bias_type = "fit", plo
       if (any(for_fit[, unique(bin_range)] < (2 * reassign_range))) {
         stop("Reassignment range too large compared to bin sizes")
       }
-      for_fit[, row_i := 1:.N]
-      resid_at_boundaries <- for_fit[outlier == FALSE,
-        get_boundary_preds(gr_var, copy(for_fit[outlier == FALSE]), space, reassign_range, gam_ctrl, ifelse(rep_n > 2, poly_deg, 1), angle_diff_fun),
-        by = .(gr_var)
-      ]
+      non_outlier_idx <- which(!for_fit$outlier)
+      non_outlier_fit <- for_fit[non_outlier_idx]
+      reassignment_group_i <- sort(unique(non_outlier_fit$gr_i))
+      boundary_data_list <- lapply(reassignment_group_i, function(cur_group_i) {
+        get_boundary_preds(
+          group_i = cur_group_i,
+          group_label = bin_labels[cur_group_i],
+          data = non_outlier_fit,
+          dist_to_centers_mat = dist_to_centers_mat,
+          space = space,
+          reassign_range = reassign_range,
+          extract_only = TRUE,
+          angle_diff_fun = angle_diff_fun
+        )
+      })
+      resid_at_boundaries <- rbindlist(lapply(seq_along(reassignment_group_i), function(k) {
+        get_boundary_preds(
+          group_label = bin_labels[reassignment_group_i[[k]]],
+          boundary_data = boundary_data_list[[k]],
+          poly_deg = 1
+        )
+      }))
       resid_at_boundaries[, likelihood := dnorm(err, pred, pred_sigma, log = FALSE)]
       resid_at_boundaries[, new_weight := ifelse(at_the_boundary == FALSE, 1, likelihood / sum(likelihood)), by = .(err, x_var)]
       cur_weights <- resid_at_boundaries[at_the_boundary == TRUE, ]$new_weight
       stable_weights <- 0
       for (rep_n in 1:10) {
         weight_dt <- resid_at_boundaries[, .(row_i, gr_var, new_weight)]
-        resid_at_boundaries <- resid_at_boundaries[,
-          get_boundary_preds(gr_var, copy(for_fit[outlier == FALSE]), space, reassign_range, gam_ctrl, ifelse(rep_n > 2, poly_deg, 1), angle_diff_fun, weights = weight_dt),
-          by = .(gr_var)
-        ]
+        resid_at_boundaries <- rbindlist(lapply(seq_along(reassignment_group_i), function(k) {
+          get_boundary_preds(
+            group_label = bin_labels[reassignment_group_i[[k]]],
+            boundary_data = boundary_data_list[[k]],
+            poly_deg = ifelse(rep_n > 2, poly_deg, 1),
+            weights = weight_dt
+          )
+        }))
         resid_at_boundaries[, likelihood := dnorm(err, pred, pred_sigma, log = FALSE)]
         resid_at_boundaries[, new_weight := ifelse(at_the_boundary == FALSE, 1, likelihood / sum(likelihood)), by = .(err, x_var)]
 
@@ -604,6 +673,7 @@ remove_cardinal_biases <- function(err, x, space = "180", bias_type = "fit", plo
           cat(sprintf("Reassignment step: %i; change in weights: %.5f", rep_n, weights_change))
         }
         for_fit[resid_at_boundaries_c, `:=`(gr_var = i.gr_var), on = .(row_i)]
+        for_fit[, gr_i := as.integer(gr_var)]
         for_fit[, center_x := bin_centers[as.numeric(gr_var)]]
         for_fit[, x_var := center_x + angle_diff_fun(x_var, center_x)]
         for_fit[, dc_var := angle_diff_fun(x, center_x)]
@@ -627,38 +697,45 @@ remove_cardinal_biases <- function(err, x, space = "180", bias_type = "fit", plo
       }
     }
     for_fit[, dist_to_bin_centre := angle_diff_fun(x_var, center_x)]
-    for_fit[, x_var := center_x + angle_diff_fun(x_var, center_x)]
-    for_fit[, dc_var := angle_diff_fun(x, center_x)]
+    if (!reassign_at_boundaries) {
+      for_fit[, x_var := center_x + angle_diff_fun(x_var, center_x)]
+      for_fit[, dc_var := angle_diff_fun(x, center_x)]
+    }
     if (debug) cat("Computing final fits...")
 
-    likelihoods <- c()
-    for (cg in unique(for_fit$gr_var)) {
+    unique_gr_var <- unique(for_fit$gr_var)
+    likelihoods <- numeric(length(unique_gr_var))
+    for (j in seq_along(unique_gr_var)) {
+      cg <- unique_gr_var[[j]]
       cur_df <- for_fit[gr_var == cg, .(err, x_var, dist_to_bin_centre, dc_var, outlier, dist_to_card)]
-      fit <- gamlss::gamlss(err ~ pb(dist_to_bin_centre),
-        ~ abs(dist_to_bin_centre),
-        data = cur_df,
-        weights = 1 - as.numeric(cur_df$outlier),
-        control = gam_ctrl
+      w_fit  <- 1 - as.numeric(cur_df$outlier)
+      basis  <- .pb_basis(cur_df$dist_to_bin_centre)
+      fit <- fit_weighted_locscale_normal(
+        y         = cur_df$err,
+        x         = cur_df$dist_to_bin_centre,
+        w         = w_fit,
+        x_basis   = basis$X,
+        S_penalty = crossprod(basis$D)
       )
+      if (!fit$ok) stop("Final loc-scale fit failed.")
 
       if (debug) {
-        cat('Fitted GAMLSS model coefficients\n')
-        cat(coef(fit))
+        cat(sprintf("Fit coef_sigma: %.4f + %.4f * |x|\n", fit$coef_sigma[1], fit$coef_sigma[2]))
       }
 
-      for_fit[gr_var == cg, pred := predict(fit, type = "response")]
-      for_fit[gr_var == cg, pred_sigma := predict(fit, what = "sigma", type = "response")]
+      for_fit[gr_var == cg, pred := fit$pred]
+      for_fit[gr_var == cg, pred_sigma := fit$pred_sigma]
 
       for_fit[gr_var == cg, bias := err * sign(pred)]
 
       if (debug) {
-        p_pred <- ggplot(for_fit[gr_var == cg], aes(x = dist_to_bin_centre, y = err)) +
+        p_pred <- ggplot(for_fit[gr_var == cg], aes(x = .data$dist_to_bin_centre, y = .data$err)) +
           geom_point() +
-          geom_line(aes(y = pred))
+          geom_line(aes(y = .data$pred))
         print(p_pred)
       }
-      for_fit[gr_var == cg, c("coef_sigma_int", "coef_sigma_slope") := data.frame(t(coef(fit, what = "sigma")))]
-      likelihoods <- c(likelihoods, logLik(fit))
+      for_fit[gr_var == cg, c("coef_sigma_int", "coef_sigma_slope") := list(fit$coef_sigma[1], fit$coef_sigma[2])]
+      likelihoods[[j]] <- fit$loglik
     }
   } else {
     for_fit[, pred := predict(MASS::rlm(err ~ poly(x_var, poly_deg), .SD[outlier == FALSE]), newdata = .SD[, .(x_var)]), by = .(card_groups)]
@@ -668,14 +745,21 @@ remove_cardinal_biases <- function(err, x, space = "180", bias_type = "fit", plo
 
   for_fit[, be_c := err - pred]
   for_fit[, which_bin := as.numeric(gr_var)]
-  for_fit[, center_y := predict(MASS::rlm(err ~ x_var),
-    newdata = data.frame(x_var = center_x)
-  ), by = .(gr_var)]
 
   if (var_sigma) {
     for_fit[, outlier := abs(be_c) > 3 * pred_sigma]
   } else {
     for_fit[, outlier := abs(be_c) > (3 * circ_sd_fun(be_c))]
+  }
+
+  large_err_thresh <- as.numeric(space) / 4
+  n_large <- sum(abs(for_fit$err) > large_err_thresh & !for_fit$outlier)
+  if (n_large / nrow(for_fit) > 0.05) {
+    pct <- round(100 * n_large / nrow(for_fit))
+    warning(sprintf(
+      "%d observation(s) (%d%%) have errors with absolute values > %.4g but are not counted as outliers. These are likely random/guessing responses. Consider dropping this subject or supplying `init_outliers` (e.g. init_outliers = abs(err) > %.4g).",
+      n_large, pct, large_err_thresh, large_err_thresh
+    ), call. = FALSE)
   }
 
   if (plots %in% c("show", "return")) {
@@ -736,7 +820,6 @@ remove_cardinal_biases_discrete <- function(err, x, space, init_outliers = NULL)
 #'
 #' @return does not return anything
 #'
-#' @import ggplot2
 #' @importFrom patchwork wrap_plots
 #' @keywords internal
 #'
@@ -754,24 +837,24 @@ make_plots_of_biases <- function(data, poly_deg, sd_val) {
   )
   alpha <- 100 / data[, .N] * length(unique(data$gr_var))
 
-  p1 <- ggplot(data = data[outlier == FALSE], aes(x = x_var, color = gr_var)) +
-    geom_point(data = data, aes(y = err, shape = outlier_f), alpha = alpha) +
-    geom_line(aes(y = pred), size = 1) +
-    geom_line(aes(y = pred + 3 * pred_sigma)) +
-    geom_line(aes(y = pred - 3 * pred_sigma)) +
+  p1 <- ggplot(data = data[outlier == FALSE], aes(x = .data$x_var, color = .data$gr_var)) +
+    geom_point(data = data, aes(y = .data$err, shape = .data$outlier_f), alpha = alpha) +
+    geom_line(aes(y = .data$pred), linewidth = 1) +
+    geom_line(aes(y = .data$pred + 3 * .data$pred_sigma)) +
+    geom_line(aes(y = .data$pred - 3 * .data$pred_sigma)) +
     geom_hline(yintercept = c(-1, 1) * data[, 3 * sd_val], linetype = 2) +
     common_plot_pars +
     labs(y = "Error")
 
-  p1a <- ggplot(data = data[outlier == FALSE], aes(x = x_var, color = gr_var)) +
-    geom_point(data = data, aes(y = be_c, shape = outlier_f), alpha = alpha) +
+  p1a <- ggplot(data = data[outlier == FALSE], aes(x = .data$x_var, color = .data$gr_var)) +
+    geom_point(data = data, aes(y = .data$be_c, shape = .data$outlier_f), alpha = alpha) +
     geom_hline(yintercept = c(-1, 1) * data[, 3 * circ_sd_180(be_c)], linetype = 2) +
-    geom_line(data = data[outlier == FALSE], aes(y = 3 * pred_sigma)) +
-    geom_line(data = data[outlier == FALSE], aes(y = -3 * pred_sigma)) +
+    geom_line(data = data[outlier == FALSE], aes(y = 3 * .data$pred_sigma)) +
+    geom_line(data = data[outlier == FALSE], aes(y = -3 * .data$pred_sigma)) +
     common_plot_pars +
     labs(y = "Bias-corrected error")
 
-  p1b <- ggplot(data, aes(x = x_var, y = bias, color = gr_var, shape = outlier_f)) +
+  p1b <- ggplot(data, aes(x = .data$x_var, y = .data$bias, color = .data$gr_var, shape = .data$outlier_f)) +
     geom_point(alpha = alpha) +
     common_plot_pars +
     geom_hline(yintercept = c(-1, 1) * data[, 3 * sd_val], linetype = 2) +
@@ -795,10 +878,9 @@ make_plots_of_biases <- function(data, poly_deg, sd_val) {
 #' @export
 #'
 #' @import data.table
-#'
 #' @examples
 #'
-#' dt <- data.table(x = runif(1000, -90, 90), y = rnorm(1000))
+#' dt <- data.table::data.table(x = runif(1000, -90, 90), y = rnorm(1000))
 #' pad_circ(dt, "x", verbose = TRUE)
 #'
 pad_circ <- function(data, circ_var, circ_borders = c(-90, 90), circ_part = 1 / 6, verbose = FALSE) {
@@ -820,11 +902,12 @@ pad_circ <- function(data, circ_var, circ_borders = c(-90, 90), circ_part = 1 / 
 #'
 #' A helper function for [remove_cardinal_biases()].
 #'
-#' @param group group (bin) id
+#' @param group_i integer group (bin) id
+#' @param group_label group (bin) label
 #' @param data dataset
+#' @param dist_to_centers_mat precomputed distances to bin centers
 #' @param space see [remove_cardinal_biases()]
 #' @param reassign_range see [remove_cardinal_biases()]
-#' @param gam_ctrl control object for gam models
 #' @param poly_deg see [remove_cardinal_biases()]
 #' @param angle_diff_fun a function to compute difference between angles
 #'
@@ -834,51 +917,229 @@ pad_circ <- function(data, circ_var, circ_borders = c(-90, 90), circ_part = 1 / 
 #' @keywords internal
 #'
 
-get_boundary_preds <- function(group, data, space, reassign_range, gam_ctrl, poly_deg, angle_diff_fun, weights = NULL) {
+get_boundary_preds <- function(group_i, group_label, data, dist_to_centers_mat, space, reassign_range, poly_deg, angle_diff_fun, weights = NULL, extract_only = FALSE, boundary_data = NULL) {
   gr_var <- outlier <- err <- x_var <- dc_var <- center_x <- dist_to_card <- bin_boundary_left <- bin_boundary_right <- bin_range <- dist_to_bin_centre <- row_i <- at_the_boundary <- dist_to_boundary <- dist_to_boundary_norm <- new_weight <- weight <- pred <- . <- predict <- pred_sigma <- resid_at_boundaries <- NULL # due to NSE notes in R CMD check
-  cur_df <- data[gr_var == group & outlier == FALSE, .(err, x_var, dc_var,
-    dist_to_bin_centre = angle_diff_fun(x_var, center_x), weight = NULL, adc = abs(dist_to_card), center_x, bin_boundary_left, bin_boundary_right, bin_range
-  )]
 
-  curr_bin_range <- cur_df$bin_range[[1]]
-  curr_bin_center <- cur_df$center_x[[1]]
-  boundary1 <- cur_df$bin_boundary_left[[1]]
-  boundary2 <- cur_df$bin_boundary_right[[1]]
+  if (is.null(boundary_data)) {
+    cur_df <- data[gr_var == group_label,
+      .(bin_range, center_x, bin_boundary_left, bin_boundary_right)][1L]
+    curr_bin_range <- cur_df$bin_range[[1]]
 
-  data[, dist_to_bin_centre := angle_diff_fun(x_var, curr_bin_center)]
-  data_incl_boundaries <- data[
-    outlier == FALSE &
-      abs(dist_to_bin_centre) < (curr_bin_range / 2 + reassign_range + 1e-12),
-    .(
-      row_i, err, x_var, dc_var, gr_var,
-      dist_to_bin_centre,
-      at_the_boundary,
-      center_x
-    )
-  ]
-  data_incl_boundaries[, dist_to_boundary := (abs(dist_to_bin_centre) - curr_bin_range / 2)]
-  data_incl_boundaries[, dist_to_boundary_norm := (dist_to_boundary + reassign_range) / (2 * reassign_range)]
-
-  if (!missing(weights)) {
-    data_incl_boundaries[, gr_var := group]
-    data_incl_boundaries[weights, `:=`(weight = new_weight), on = .(row_i, gr_var)]
-  } else {
-    data_incl_boundaries[, weight := ifelse(at_the_boundary == FALSE, 1, ifelse(gr_var == group, 0.75, 0.25))]
+    dist_to_bin_centre_all <- dist_to_centers_mat[data$row_i, group_i]
+    in_boundary_range <- abs(dist_to_bin_centre_all) < (curr_bin_range / 2 + reassign_range + 1e-12)
+    boundary_data <- data[
+      in_boundary_range,
+      .(row_i, err, x_var, dc_var, gr_var, at_the_boundary, center_x)
+    ]
+    boundary_data[, dist_to_bin_centre := dist_to_bin_centre_all[in_boundary_range]]
+    boundary_data[, dist_to_boundary := (abs(dist_to_bin_centre) - curr_bin_range / 2)]
+    boundary_data[, dist_to_boundary_norm := (dist_to_boundary + reassign_range) / (2 * reassign_range)]
+    if (extract_only) return(boundary_data)
   }
 
+  data_incl_boundaries <- copy(boundary_data)
+  if (!missing(weights) && !is.null(weights)) {
+    data_incl_boundaries[, gr_var := group_label]
+    data_incl_boundaries[weights, `:=`(weight = new_weight), on = .(row_i, gr_var)]
+  } else {
+    data_incl_boundaries[, weight := ifelse(at_the_boundary == FALSE, 1, ifelse(gr_var == group_label, 0.75, 0.25))]
+  }
 
-  fit <- gamlss::gamlss(err ~ dist_to_bin_centre,
-    ~ abs(dist_to_bin_centre),
-    data = data_incl_boundaries,
-    weights = weight,
-    control = gam_ctrl
+  fit_fast <- fit_weighted_locscale_normal(
+    y = data_incl_boundaries$err,
+    x = data_incl_boundaries$dist_to_bin_centre,
+    w = data_incl_boundaries$weight
   )
-
-  data_incl_boundaries[, pred := predict(fit, type = "response")]
-  data_incl_boundaries[, pred_sigma := predict(fit, what = "sigma", type = "response")]
+  if (!fit_fast$ok) {
+    stop("Boundary loc-scale fit failed in fit_weighted_locscale_normal().")
+  }
+  data_incl_boundaries[, pred := fit_fast$pred]
+  data_incl_boundaries[, pred_sigma := fit_fast$pred_sigma]
 
   data_incl_boundaries[, resid_at_boundaries := err - pred]
-  data_incl_boundaries[, .(row_i, at_the_boundary, x_var, dc_var, dist_to_bin_centre, err, pred, resid_at_boundaries, dist_to_boundary, dist_to_boundary_norm, weight, pred_sigma)]
+  data_incl_boundaries[, .(row_i, gr_var = group_label, at_the_boundary, x_var, dc_var, dist_to_bin_centre, err, pred, resid_at_boundaries, dist_to_boundary, dist_to_boundary_norm, weight, pred_sigma)]
+}
+
+# Truncated-power P-spline basis matching gamlss::pb() defaults exactly.
+# Returns list(X = n×K basis matrix, D = (K-2)×K difference matrix).
+.pb_basis <- function(x) {
+  x        <- as.vector(x)
+  n_unique <- length(unique(x))
+  inter    <- min(if (length(x) < 99L) 10L else 20L, n_unique)
+  degree   <- 3L; order <- 2L
+  xl <- min(x); xr <- max(x)
+  xmin <- xl - 0.01 * (xr - xl); xmax <- xr + 0.01 * (xr - xl)
+  dx   <- (xmax - xmin) / inter
+  knots <- seq(xmin - degree * dx, xmax + degree * dx, by = dx)
+  tpower <- function(x, t, p) (x - t)^p * (x > t)
+  P      <- outer(x, knots, tpower, degree)
+  D_full <- diff(diag(ncol(P)), diff = degree + 1L) / (gamma(degree + 1L) * dx^degree)
+  X      <- (-1)^(degree + 1L) * P %*% t(D_full)
+  D      <- diff(diag(ncol(X)), diff = order)
+  list(X = X, D = D)
+}
+
+# ML EM lambda selection for penalized WLS via eigendecomposition.
+# Precomputes QR(B) + eigen(R^{-T} S R^{-1}) once, then each EM iteration
+# is O(p) element-wise ops — no SVD inside the loop.
+# y_w: sqrt(w_mu)*y  (n-vector, pre-weighted response)
+# B:   sqrt(w_mu)*X  (n×p, pre-weighted design matrix, already subset to pos rows)
+# S_full: p×p penalty matrix
+# Returns list(lambda, edf, beta)  — same interface as the former .gcv_pspline.
+.lambda_em_pspline <- function(y_w, B, S_full,
+                                lambda = 10, max_iter = 50L, tol = 1e-7,
+                                penalty_order = 2L) {
+  p    <- ncol(B)
+  n_eff <- nrow(B)
+  qr_B <- qr(B, tol = .Machine$double.eps^0.8)
+  Q    <- qr.Q(qr_B)
+  R    <- qr.R(qr_B)
+  Rinv <- backsolve(R, diag(p))
+  K    <- crossprod(Rinv, S_full %*% Rinv)
+  K    <- (K + t(K)) / 2
+  eig  <- eigen(K, symmetric = TRUE)
+  U    <- eig$vectors
+  lk   <- pmax(eig$values, 0)
+  z_w  <- as.numeric(crossprod(Q, y_w))
+  qq   <- as.numeric(crossprod(U, z_w))
+  y_y  <- sum(y_w^2)
+
+  for (iter in seq_len(max_iter)) {
+    d    <- 1 + lambda * lk
+    edf  <- sum(1 / d)
+    wrss <- max(y_y - sum(qq^2 * (2 / d - 1 / d^2)), 0)
+    sig2 <- wrss / (n_eff - edf)
+    tau2 <- sum(lk * qq^2 / d^2) / max(edf - penalty_order, 1e-6)
+    if (tau2 < 1e-7) tau2 <- 1e-7
+    lambda_old <- lambda
+    lambda     <- max(1e-7, min(sig2 / tau2, 1e7))
+    if (abs(lambda - lambda_old) < tol) break
+  }
+
+  d    <- 1 + lambda * lk
+  edf  <- sum(1 / d)
+  beta <- backsolve(R, as.numeric(U %*% (qq / d)))
+  list(lambda = lambda, edf = edf, beta = beta)
+}
+
+fit_weighted_locscale_normal <- function(y, x, w, poly_deg = 1L, x_basis = NULL, x_sigma = NULL, S_penalty = NULL, lambda_fixed = NULL) {
+  w <- as.numeric(w)
+  if (!all(is.finite(y)) || !all(is.finite(x)) || !all(is.finite(w))) {
+    return(list(ok = FALSE))
+  }
+  pos   <- w > 0                              # TRUE for observations with positive weight
+  w     <- pmax(w, 1e-12)
+  x_abs <- abs(if (is.null(x_sigma)) x else x_sigma)
+
+  if (is.null(x_basis)) {
+    X <- if (poly_deg == 1L) cbind(1, x) else cbind(1, poly(x, poly_deg, raw = FALSE))
+  } else {
+    X <- x_basis
+  }
+  p <- ncol(X)
+
+  if (length(y) < (p + 2L) || length(unique(x)) < 2L) {
+    mu_const    <- stats::weighted.mean(y, w)
+    sigma_const <- sqrt(stats::weighted.mean((y - mu_const)^2, w))
+    if (!is.finite(sigma_const) || sigma_const <= 0) sigma_const <- 1
+    loglik <- sum(stats::dnorm(y[pos], mu_const, sigma_const, log = TRUE))
+    return(list(ok = TRUE, pred = rep(mu_const, length(y)), pred_sigma = rep(sigma_const, length(y)),
+                coef_sigma = c(log(sigma_const), 0), loglik = loglik))
+  }
+
+  fit_mu_start <- try(lm.wfit(x = X, y = y, w = w), silent = TRUE)
+  if (inherits(fit_mu_start, "try-error") || any(!is.finite(fit_mu_start$coefficients))) {
+    beta_start <- c(stats::weighted.mean(y, w), rep(0, p - 1L))
+  } else {
+    beta_start <- fit_mu_start$coefficients
+  }
+  mu_start <- as.numeric(X %*% beta_start)
+  sigma0 <- sqrt(stats::weighted.mean((y - mu_start)^2, w))
+  if (!is.finite(sigma0) || sigma0 <= 0) sigma0 <- stats::sd(y)
+  if (!is.finite(sigma0) || sigma0 <= 0) sigma0 <- 1
+
+  # RS algorithm: when S_penalty is given and lambda is not fixed,
+  # alternate between GCV-penalized WLS for mu and 2-param NLL for sigma.
+  if (!is.null(S_penalty) && is.null(lambda_fixed)) {
+    # S_penalty can be p×p (covers all columns, e.g. from .make_pspline)
+    # or (p-1)×(p-1) (covers cols 2:p when col 1 is an explicit intercept).
+    if (nrow(S_penalty) == p) {
+      S_full <- S_penalty
+    } else {
+      S_full <- matrix(0, p, p)
+      S_full[2:p, 2:p] <- S_penalty
+    }
+    gamma   <- c(log(sigma0), 0)
+    beta    <- beta_start
+    X_sigma <- cbind(1, x_abs)
+    ok      <- FALSE
+    dev_old <- Inf
+    for (iter in seq_len(20L)) {
+      sigma_vec <- exp(gamma[1] + gamma[2] * x_abs)
+      w_mu  <- w / sigma_vec^2
+      # Use only positive-weight rows so n_eff reflects actual sample size.
+      B_em  <- X[pos, , drop = FALSE] * sqrt(w_mu[pos])
+      y_em  <- y[pos] * sqrt(w_mu[pos])
+      em_res <- tryCatch(.lambda_em_pspline(y_em, B_em, S_full), error = function(e) NULL)
+      if (is.null(em_res) || !all(is.finite(em_res$beta))) break
+      beta  <- em_res$beta
+      mu    <- as.numeric(X %*% beta)
+      resid <- y - mu
+      # IRLS sigma update (working variable approach)
+      resid2_scaled <- (resid / sigma_vec)^2
+      z_sigma       <- log(sigma_vec) + (resid2_scaled - 1) / 2
+      lm_sigma      <- stats::lm.wfit(x = X_sigma, y = z_sigma, w = w * 2)
+      gamma_new     <- as.numeric(lm_sigma$coefficients)
+      if (anyNA(gamma_new)) gamma_new[is.na(gamma_new)] <- gamma[is.na(gamma_new)]
+      gamma_new     <- pmin(pmax(gamma_new, -30), 30)
+      sigma_new     <- exp(gamma_new[1] + gamma_new[2] * x_abs)
+      dev <- -2 * sum(w * stats::dnorm(y, mu, sigma_new, log = TRUE))
+      if (is.finite(dev_old) && abs(dev_old - dev) / (abs(dev_old) + 0.1) < 1e-5) {
+        gamma <- gamma_new; ok <- TRUE; break
+      }
+      gamma <- gamma_new; dev_old <- dev; ok <- TRUE
+    }
+    if (!ok || !all(is.finite(beta)) || !all(is.finite(gamma))) return(list(ok = FALSE))
+    best_par <- c(beta, gamma)
+  } else {
+    # Parametric RS: lm.wfit mu + IRLS sigma (linear / poly, no spline penalty).
+    gamma   <- c(log(sigma0), 0)
+    beta    <- beta_start
+    X_sigma <- cbind(1, x_abs)
+    dev_old <- Inf
+    for (iter in seq_len(20L)) {
+      sigma_vec <- exp(gamma[1] + gamma[2] * x_abs)
+      w_mu  <- w / sigma_vec^2
+      lm_mu <- stats::lm.wfit(x = X, y = y, w = w_mu)
+      b_new <- as.numeric(lm_mu$coefficients)
+      if (anyNA(b_new)) b_new[is.na(b_new)] <- beta[is.na(b_new)]
+      beta  <- b_new
+      mu    <- as.numeric(X %*% beta)
+      resid <- y - mu
+      resid2_scaled <- (resid / sigma_vec)^2
+      z_sigma <- log(sigma_vec) + (resid2_scaled - 1) / 2
+      lm_s    <- stats::lm.wfit(x = X_sigma, y = z_sigma, w = w * 2)
+      g_new   <- as.numeric(lm_s$coefficients)
+      if (anyNA(g_new)) g_new[is.na(g_new)] <- gamma[is.na(g_new)]
+      g_new   <- pmin(pmax(g_new, -30), 30)
+      sigma_new <- exp(g_new[1] + g_new[2] * x_abs)
+      dev <- -2 * sum(w * stats::dnorm(y, mu, sigma_new, log = TRUE))
+      if (is.finite(dev_old) && abs(dev_old - dev) / (abs(dev_old) + 0.1) < 1e-5) {
+        gamma <- g_new; break
+      }
+      gamma <- g_new; dev_old <- dev
+    }
+    if (!all(is.finite(beta)) || !all(is.finite(gamma))) return(list(ok = FALSE))
+  }
+
+  mu_hat    <- as.numeric(X %*% beta)
+  sigma_hat <- exp(gamma[1] + gamma[2] * x_abs)
+  if (any(!is.finite(mu_hat)) || any(!is.finite(sigma_hat)) || any(sigma_hat <= 0)) {
+    return(list(ok = FALSE))
+  }
+  loglik <- sum(stats::dnorm(y[pos] - mu_hat[pos], 0, sigma_hat[pos], log = TRUE))
+  list(ok = TRUE, pred = mu_hat, pred_sigma = sigma_hat,
+       coef_sigma = gamma, loglik = loglik)
 }
 
 
@@ -907,9 +1168,7 @@ inverse <- function(f, lower = 1e-16, upper = 1000) {
 #'
 #' vm_circ_sd_to_kappa(vm_sd)
 #'
-#' x <- circular::rvonmises(10000, mu = circular::circular(0), kappa = vm_kappa)
-#'
-#' sprintf("Expected SD: %.2f, actual SD: %.2f", vm_sd, circ_sd_rad(x))
+#' vm_kappa_to_circ_sd(vm_circ_sd_to_kappa(vm_sd))
 #'
 vm_kappa_to_circ_sd <- function(kappa) {
   sqrt(-2 * log(a_fun(kappa)))
@@ -965,21 +1224,20 @@ vm_circ_sd_deg_to_kappa <- function(sd_deg) {
 #' set.seed(1)
 #' n_obs <- 200
 #' w <- runif(n_obs)
-#' w <- w/sum(w)
+#' w <- w / sum(w)
 #' x <- rnorm(n_obs, sd = 5)
 #' weighted_sem(x, w)
-
 weighted_sem <- function(x, w, na.rm = FALSE) {
   if (na.rm) {
     w <- w[i <- !is.na(x)]
     x <- x[i]
   }
   n <- length(w)
-  w <- w/sum(w)
+  w <- w / sum(w)
   x_w_bar <- stats::weighted.mean(x, w, na.rm = na.rm)
   # case I
-  var_w_1 <- (sum(w*x^2) - x_w_bar^2)/(1-sum(w^2))
-  sem_w_1 <- sqrt(var_w_1*sum(w^2))
+  var_w_1 <- (sum(w * x^2) - x_w_bar^2) / (1 - sum(w^2))
+  sem_w_1 <- sqrt(var_w_1 * sum(w^2))
   # Kirchner also provides case II that assumes equal importance but different variances
   # var_w_2 <- (sum(w*x^2)-x_w_bar^2)*n/(n-1)
   # sem_w_2 <- sqrt(var_w_2/n)
@@ -1039,6 +1297,7 @@ predict.circ_loess <- function(object, newdata, ...) {
 #' @export
 #'
 #' @examples
+#' library(ggplot2)
 #' p <- ggplot(Pascucci_et_al_2019_data, aes(x = orientation, y = err)) +
 #'   geom_point(alpha = 0.05) +
 #'   labs(x = "Orientation, deg.", y = "Error, deg.")
@@ -1110,3 +1369,506 @@ circ_loess <- function(formula = NULL, data = NULL, angle = NULL, y = NULL, xseq
     y_se = unlist(y_est[2, ]), w = unlist(y_est[3, ])
   ), class = "circ_loess")
 }
+
+
+#' Compute asymmetry in weighted probability density
+#'
+#' This function calculates the asymmetry in the probability density of a given variable (usually errors) relative to another variable (usually dissimilarity) using kernel density estimation. The asymmetry is computed for each x-axis value, and the result can be averaged or returned for each value individually.
+#'
+#' @param dt data.table with the data.
+#' @param circ_space Circular space, which can be 180 or 360 (default: 180).
+#' @param weights_sd Standard deviation of the Gaussian window to use across `xvar` (default: 10).
+#' @param kernel_bw Bandwidth for the kernel density estimator across `yvar`. If NULL, it is computed using [stats::bw.SJ()]. If "average", it is computed using [stats::bw.SJ()] for each group indicated by `by` and then averaged. Otherwise it is passed to [stats::density()] (default: NULL).
+#' @param xvar X-axis variable, such as dissimilarity between items (default: "abs_td_dist").
+#' @param yvar Y-axis variable, normally errors (default: "bias_to_distr_corr").
+#' @param by A vector of grouping variable names (default: an empty vector).
+#' @param n The number of steps for the x-axis variable at which the density is computed (default: 181).
+#' @param average If TRUE, the asymmetry is averaged for each x-value (default: TRUE).
+#' @param return_full_density If TRUE, returns the full data.table with density computed at each point (default: FALSE).
+#' @param normalize if TRUE, normalizes the difference in probability density by the total sum of probability density (with zero point excluded). Delta then corresponds to the probability of observing a given sign. In use only when average is TRUE.
+#' @param wrap If TRUE (default), the kernel density estimate is wrapped around the circle, so that a kernel centred near one end of the `yvar` axis reappears at the other end instead of being truncated. Set to FALSE for the pre-1.4.0 (truncated) behaviour. On orientation or colour data, where errors sit near zero and the bandwidth is a few degrees, this changes nothing to ~1e-13; it matters when `yvar` carries mass near +/- `circ_space`/2, such as the 180-degrees-off reversals in motion-direction data.
+#' @param exclude_antipode If TRUE (default), the +/- `circ_space`/2 point is dropped from the positive and negative sums, exactly like zero. It is the same angle approached from two sides and so has no sign, and with `n` odd it is otherwise counted twice (once as `-max_diss` and once as `+max_diss`). Set to FALSE for the pre-1.4.0 behaviour.
+#' @param n_wraps Number of periodic images summed on each side when `wrap` is TRUE (default: 1). One is already far past double precision for any bandwidth much smaller than `circ_space`.
+#' @param rescale_narrow If TRUE (default), a bandwidth narrower than the spacing of the `x_grid` triggers a rescaling of `yvar` and the bandwidth by a common factor, so that the kernel is at least one grid cell wide. The asymmetry is a signed mass difference and a positive scaling preserves each value's sign, so the estimand is unchanged; this is equivalent to evaluating on a finer grid, but cheaper. Without it, a kernel narrower than a cell falls between grid points and the rectangle sum stops representing the density (at `kernel_bw` = dx/20 a point centred on a cell contributes 7.98x its mass and one half a cell away contributes 0). [stats::bw.SJ()] does reach that regime on real data. Set to FALSE for the pre-1.4.0 behaviour.
+#' @param scale_safety Fraction of `circ_space`/2 that the rescaled `yvar` values are allowed to reach (default: 0.5). Rescaling treats the circular axis as linear, which is only valid while no mass is near the wrap, so the factor is capped rather than assumed safe.
+#' @return A data.table with the grouping variables, `dist` - the values of X-axis variable at which the density is computed, and `delta` - the difference (asymmetry) in probability density for positive and negative values of `yvar`; or the full density data if `return_full_density` is TRUE.
+#' @export
+#' @importFrom stats as.formula bw.SJ density weights
+#' @import data.table
+#' @examples
+#'
+#' data(Pascucci_et_al_2019_data)
+#' ex_data <- Pascucci_et_al_2019_data
+#' ex_data[, err := angle_diff_180(reported, orientation)] # response errors
+#' ex_data[, prev_ori := shift(orientation), by = observer] # orientation on previous trial
+#'
+#' # determine the shift in orientations between trials
+#' ex_data[, diff_in_ori := angle_diff_180(prev_ori, orientation)]
+#' ex_data[, abs_diff_in_ori := abs(diff_in_ori)]
+#' ex_data[, err_rel_to_prev_targ := ifelse(diff_in_ori < 0, -err, err)]
+#'
+#' err_dens <- density_asymmetry(ex_data[!is.na(err_rel_to_prev_targ)],
+#'   circ_space = 180, weights_sd = 10, xvar = "abs_diff_in_ori",
+#'   yvar = "err_rel_to_prev_targ", by = c("observer")
+#' )
+#'
+#' library(ggplot2)
+#' ggplot(err_dens, aes(x = dist, y = delta)) +
+#'   geom_line(stat = "summary", fun = mean) +
+#'   labs(y = "Asymmetry in error probability density, %", x = "Absolute orientation difference, °")
+#'
+density_asymmetry <- function(dt, circ_space = 180, weights_sd = 10, kernel_bw = NULL, xvar = "abs_td_dist", yvar = "bias_to_distr_corr", by = c(), n = 181, average = T, return_full_density = F, normalize = T, wrap = TRUE, exclude_antipode = TRUE, n_wraps = 1, rescale_narrow = TRUE, scale_safety = 0.5) {
+  x_val <- x <- x_sign <- delta <- `1` <- `-1` <- total <- ratio <- bw_est <- . <- NULL # due to NSE notes in R CMD check
+
+  if (!(circ_space %in% c(180, 360))) {
+    stop("`circ_space` should be 180 or 360")
+  }
+
+  max_diss <- circ_space / 2
+  if (is.null(kernel_bw)) {
+    kernel_bw <- bw.SJ(dt[, get(yvar)])
+  } else if (kernel_bw == 'average'){
+    kernel_bw <- dt[, .(bw_est = bw.SJ(get(yvar))), by = by][, mean(bw_est)]
+  }
+
+  # Compute all weights at once using matrix operations
+  dist_grid <- 1:max_diss
+  x_data <- dt[, get(xvar)]
+  weight_matrix <- exp(-0.5 * outer(x_data, dist_grid, FUN = function(x, d) ((x - d) / weights_sd)^2)) / (sqrt(2 * pi) * weights_sd)
+  weight_matrix <- sweep(weight_matrix, 2, colSums(weight_matrix), FUN = "/")
+
+  # Compute density for all i values at once, grouped by 'by' variables
+  x_grid <- seq(-max_diss, max_diss, length.out = n)
+  dx <- 2 * max_diss / (n - 1)
+
+  # Periodic images of the kernel, so that mass near one end of the y axis is not
+  # truncated but reappears at the other end. `wrap = FALSE` restores the old
+  # single-image kernel.
+  kernel_offsets <- if (wrap) circ_space * (-n_wraps:n_wraps) else 0
+
+  # Rescaling is a change of the y variable itself, so it would misrepresent the
+  # density that `return_full_density` exists to expose; it only applies to the
+  # summed asymmetry.
+  rescale_here <- rescale_narrow && !return_full_density
+  bias_scales <- c()
+
+  res <- dt[, {
+    y_data <- get(yvar)
+    bw_group <- kernel_bw
+    if (rescale_here) {
+      # Widen the distribution (and the bandwidth with it) until the kernel spans at
+      # least one grid cell, instead of flooring the bandwidth and over-smoothing the
+      # very groups that triggered it. A positive scaling preserves each value's sign,
+      # so the signed mass difference this function returns is unchanged. Capped so
+      # the scaled values stay clear of the wrap, where the linear scaling would stop
+      # being legitimate.
+      wanted <- dx / max(bw_group, 1e-12)
+      allowed <- scale_safety * max_diss / max(max(abs(y_data)), 1e-12)
+      bias_scale <- max(min(wanted, allowed), 1)
+      y_data <- y_data * bias_scale
+      bw_group <- max(bw_group * bias_scale, dx / 2)
+      bias_scales <<- c(bias_scales, bias_scale)
+    }
+    dist_matrix <- outer(x_grid, y_data, FUN = "-")
+    kernel_base <- Reduce(`+`, lapply(kernel_offsets, function(o) exp(-0.5 * ((dist_matrix + o) / bw_group)^2))) / (sqrt(2 * pi) * bw_group)
+
+    # Get weights for this group
+    group_weights <- weight_matrix[.I, , drop = FALSE]
+
+    # Compute all density values for this group
+    all_density_vals <- kernel_base %*% group_weights
+
+    # Create result for this group
+    data.table(
+      x = x_grid,
+      y = as.vector(all_density_vals),
+      dist = rep(1:max_diss, each = n)
+    )
+  }, by = by]
+
+  # Rounded, because `x_val` is the key the two signs are paired on below and
+  # `seq()` does not produce bitwise-symmetric endpoints for every `n`: on the
+  # n = 1801 grid 604 of the 900 pairs fail to match on `abs(x)` alone, and each
+  # unmatched point silently drops out of the sums as an NA `delta`.
+  res[, x_val := round(abs(x), 10)]
+  res[, x_sign := sign(x)]
+
+  if (return_full_density) {
+    return(res)
+  }
+
+  # The antipode is the same angle reached from either side, so it is as
+  # sign-ambiguous as zero (which drops out below as an NA `delta`), and with an odd
+  # `n` the inclusive grid gives it two cells. Once it is excluded, an inclusive grid
+  # of n = 2k + 1 points and a half-open one of 2k points cover an identical set of
+  # angles and give identical results.
+  if (exclude_antipode) {
+    res <- res[x_val < max_diss]
+  }
+
+  res <- dcast(res,
+    as.formula(paste(paste(by, collapse = "+"), "+dist+x_val~x_sign")),
+    value.var = "y"
+  )
+  res[, delta := `1` - `-1`]
+  res[, total := `1` + `-1`]
+  res[, ratio := `1` / `-1`]
+
+  if (return_full_density) {
+    return(res)
+  }
+
+  if (average) {
+    if (normalize){
+      res <- res[!is.na(delta), .(delta = sum(delta)/sum(total)), by = c("dist", by)]
+    } else {
+      res <- res[!is.na(delta), .(delta = sum(delta)), by = c("dist", by)]
+    }
+  }
+
+  setattr(res, "kernel_bw", kernel_bw)
+  if (length(bias_scales) > 0) {
+    setattr(res, "bias_scale", bias_scales)
+  }
+
+  res
+}
+
+
+
+#' Compute asymmetry in weighted probability density for discrete data
+#'
+#' This function calculates the asymmetry in the probability density of a given variable using kernel density estimation. Unlike `density_asymmetry`, it does not take an `xvar` and assumes that the asymmetry is calculated for the whole dataset or subsets defined by `by` (which could also include a discrete x variable if needed) .
+#'
+#' @param dt data.table with the data.
+#' @param yvar Y-axis variable, normally errors (default: "bias_to_distr_corr").
+#' @param circ_space Circular space, which can be 180 or 360 (default: 180).
+#' @param kernel_bw Bandwidth for the kernel density estimator across `yvar`. If NULL, it is computed using [stats::bw.SJ()]. If "average", it is computed using [stats::bw.SJ()] for each group indicated by `by` and then averaged. Otherwise it is passed to [stats::density()] (default: NULL).
+#' @param by A vector of grouping variable names (default: an empty vector).
+#' @param n The number of steps for the density computation (default: 181).
+#' @param average If TRUE, the asymmetry is averaged (default: TRUE).
+#' @param return_full_density If TRUE, returns the full data.table with density computed at each point (default: FALSE).
+#' @param normalize if TRUE, normalizes the difference in probability density by the total sum of probability density (with zero point excluded). Delta then corresponds to the probability of observing a given sign. In use only when average is TRUE.
+#' @param wrap If TRUE (default), the kernel density estimate is wrapped around the circle, so that a kernel centred near one end of the `yvar` axis reappears at the other end instead of being truncated. See [density_asymmetry()].
+#' @param exclude_antipode If TRUE (default), the +/- `circ_space`/2 point is dropped from the positive and negative sums, exactly like zero. See [density_asymmetry()].
+#' @param n_wraps Number of periodic images summed on each side when `wrap` is TRUE (default: 1).
+#' @param rescale_narrow If TRUE (default), a bandwidth narrower than the density grid spacing triggers a rescaling of `yvar` and the bandwidth by a common factor. See [density_asymmetry()].
+#' @param scale_safety Fraction of `circ_space`/2 that the rescaled `yvar` values are allowed to reach (default: 0.5).
+#' @return A data.table with the grouping variables and `delta` - the difference (asymmetry) in probability density for positive and negative values of `yvar`; or the full density data if `return_full_density` is TRUE.
+#' @export
+#' @importFrom stats as.formula bw.SJ density weights
+#' @import data.table
+#'
+#' @examples
+#'
+#' data(Pascucci_et_al_2019_data)
+#' ex_data <- Pascucci_et_al_2019_data
+#' ex_data[, err := angle_diff_180(reported, orientation)] # response errors
+#' ex_data[, prev_ori := shift(orientation), by = observer] # orientation on previous trial
+#'
+#' # determine the shift in orientations between trials
+#' ex_data[, diff_in_ori := angle_diff_180(prev_ori, orientation)]
+#' ex_data[, abs_diff_in_ori := abs(diff_in_ori)]
+#' ex_data[, err_rel_to_prev_targ := ifelse(diff_in_ori < 0, -err, err)]
+#' ex_data[, similarity_discrete := ifelse(abs_diff_in_ori>45, 'Dissimilar', 'Similar')]
+#' err_dens_discrete <- density_asymmetry_discrete(ex_data[!is.na(err_rel_to_prev_targ)],
+#'   circ_space = 180, yvar = "err_rel_to_prev_targ", by = c("observer","similarity_discrete")
+#' )
+#'
+#' library(ggplot2)
+#' ggplot(err_dens_discrete, aes(x = similarity_discrete, y = delta))+
+#' geom_violin() + geom_point() +
+#'   labs(y = "Asymmetry in error probability density, %", x = "Previous target")
+#'
+
+density_asymmetry_discrete <- function(dt, yvar = "bias_to_distr_corr", circ_space = 180, kernel_bw = NULL, by = c(), n = 181, average = T, return_full_density = F, normalize = T, wrap = TRUE, exclude_antipode = TRUE, n_wraps = 1, rescale_narrow = TRUE, scale_safety = 0.5) {
+  x_val <- x <- x_sign <- delta <- `1` <- `-1` <- total <- ratio <- . <- bw_est <- NULL # due to NSE notes in R CMD check
+
+  if (!(circ_space %in% c(180, 360))) {
+    stop("`circ_space` should be 180 or 360")
+  }
+
+  max_diss <- circ_space / 2
+  if (is.null(kernel_bw)) {
+    kernel_bw <- bw.SJ(dt[, get(yvar)])
+  }  else if (kernel_bw == 'average'){
+    kernel_bw <- dt[, .(bw_est = bw.SJ(get(yvar))), by = by][, mean(bw_est)]
+  }
+
+  dx <- 2 * max_diss / (n - 1)
+  rescale_here <- rescale_narrow && !return_full_density
+  bias_scales <- c()
+
+  # Wrapping via [stats::density()] is done by evaluating over `n_wraps` extra
+  # periods on each side at the same grid spacing and folding the images back onto
+  # the central period. Augmenting the sample with shifted copies would be shorter
+  # but unsound: `density()` bins the data and silently drops whatever falls outside
+  # `from - 4 * bw` .. `to + 4 * bw`, which is exactly where the shifted copies sit.
+  circ_density <- function(y_data, bw) {
+    if (!wrap) {
+      d <- density(y_data, from = -max_diss, to = max_diss, n = n, bw = bw)
+      return(list(x = d$x, y = d$y))
+    }
+    k <- n_wraps
+    d <- density(y_data,
+      from = -(2 * k + 1) * max_diss, to = (2 * k + 1) * max_diss,
+      n = (2 * k + 1) * (n - 1) + 1, bw = bw
+    )
+    centre <- k * (n - 1) + seq_len(n)
+    folded <- Reduce(`+`, lapply(-k:k, function(m) d$y[centre + m * (n - 1)]))
+    list(x = d$x[centre], y = folded)
+  }
+
+  res <- dt[, {
+    y_data <- get(yvar)
+    bw_group <- kernel_bw
+    if (rescale_here) {
+      wanted <- dx / max(bw_group, 1e-12)
+      allowed <- scale_safety * max_diss / max(max(abs(y_data)), 1e-12)
+      bias_scale <- max(min(wanted, allowed), 1)
+      y_data <- y_data * bias_scale
+      bw_group <- max(bw_group * bias_scale, dx / 2)
+      bias_scales <<- c(bias_scales, bias_scale)
+    }
+    circ_density(y_data, bw_group)
+  }, by = by]
+  # Rounded: see the same step in `density_asymmetry()`.
+  res[, x_val := round(abs(x), 10)]
+  res[, x_sign := sign(x)]
+
+  if (return_full_density) {
+    return(res)
+  }
+
+  if (exclude_antipode) {
+    res <- res[x_val < max_diss]
+  }
+
+  res <- dcast(res,
+               as.formula(paste(paste(by, collapse = "+"), "+x_val~x_sign")),
+               value.var = "y"
+  )
+  res[, delta := `1` - `-1`]
+  res[, total := `1` + `-1`]
+  res[, ratio := `1` / `-1`]
+
+  if (average) {
+    if (normalize){
+      res <- res[!is.na(delta), .(delta = sum(delta)/sum(total)), by = by]
+    } else {
+      res <- res[!is.na(delta), .(delta = sum(delta)), by = by]
+    }
+  }
+
+  setattr(res, "kernel_bw", kernel_bw)
+  if (length(bias_scales) > 0) {
+    setattr(res, "bias_scale", bias_scales)
+  }
+
+  res
+}
+
+
+#' Compute smoothed estimate of circular standard deviation
+#'
+#' This function calculates smoothed estimates of circular standard deviation using weighted kernel density estimation. It works similarly to `density_asymmetry` by applying Gaussian weights across an x-axis variable to compute localized circular SD estimates.
+#'
+#' @param dt data.table with the data.
+#' @param circ_space Circular space, which can be 180 or 360 (default: 180).
+#' @param weights_sd Standard deviation of the Gaussian window to use across `xvar` (default: 10).
+#' @param xvar X-axis variable, such as dissimilarity between items (default: "abs_td_dist").
+#' @param yvar Y-axis variable, normally errors (default: "err").
+#' @param by A vector of grouping variable names (default: an empty vector).
+#' @param n_points The number of points along the x-axis at which to compute circular SD (default: 91).
+#'
+#' @return A data.table with the grouping variables, `dist` - the values of X-axis variable at which the circular SD is computed, and `circ_sd` - the smoothed circular standard deviation estimate at each point.
+#' @export
+#' @import data.table
+#' @examples
+#'
+#' data(Pascucci_et_al_2019_data)
+#' ex_data <- Pascucci_et_al_2019_data
+#' ex_data[, err := angle_diff_180(reported, orientation)] # response errors
+#' ex_data[, prev_ori := shift(orientation), by = observer] # orientation on previous trial
+#'
+#' # determine the shift in orientations between trials
+#' ex_data[, diff_in_ori := angle_diff_180(prev_ori, orientation)]
+#' ex_data[, abs_diff_in_ori := abs(diff_in_ori)]
+#'
+#' circ_sd_smooth <- smoothed_circ_sd(ex_data[!is.na(diff_in_ori)],
+#'   circ_space = 180, weights_sd = 10, xvar = "abs_diff_in_ori",
+#'   yvar = "err", by = c("observer")
+#' )
+#'
+#' library(ggplot2)
+#' ggplot(circ_sd_smooth, aes(x = dist, y = circ_sd)) +
+#'   geom_line(stat = "summary", fun = mean) +
+#'   labs(y = "Circular SD, °", x = "Absolute orientation difference, °")
+#'
+smoothed_circ_sd <- function(dt, circ_space = 180, weights_sd = 10, xvar = "abs_td_dist", yvar = "err", by = c(), n_points = 91) {
+  dist <- circ_sd <- . <- NULL # due to NSE notes in R CMD check
+
+  if (!(circ_space %in% c(180, 360))) {
+    stop("`circ_space` should be 180 or 360")
+  }
+
+  max_diss <- circ_space / 2
+  dist_grid <- seq(1, max_diss, length.out = n_points)
+
+  # Get data vectors
+  x_data <- dt[, get(xvar)]
+
+  # Compute all weights at once using matrix operations
+  weight_matrix <- exp(-0.5 * outer(x_data, dist_grid, FUN = function(x, d) ((x - d) / weights_sd)^2)) / (sqrt(2 * pi) * weights_sd)
+  weight_matrix <- sweep(weight_matrix, 2, colSums(weight_matrix), FUN = "/")
+
+  # Compute weighted circular SD for all distance values, grouped by 'by' variables
+  res <- dt[, {
+    y_data <- get(yvar)
+
+    # Compute weighted circular SD for each distance point
+    circ_sd_vals <- sapply(1:length(dist_grid), function(i) {
+      weights <- weight_matrix[.I, i]
+      # Use weighted circular SD with appropriate circular space conversion
+      weighted_circ_sd(y_data / (circ_space/2) * pi, weights, na.rm = TRUE) / pi * (circ_space/2)
+    })
+
+    data.table(
+      dist = dist_grid,
+      circ_sd = circ_sd_vals
+    )
+  }, by = by]
+
+  res
+}
+
+#' Compute 2D asymmetry in weighted probability density
+#'
+#' This function calculates the asymmetry in the probability density of a given variable (usually errors) relative to two other variables using kernel density estimation with optimized matrix calculations. The asymmetry is computed for each combination of x-axis and y-axis values in a 2D grid.
+#'
+#' @param dt data.table with the data.
+#' @param circ_space Circular space vector of length 2 or 3, specifying spaces for x, y, and z variables (default: c(180, 180, 180)).
+#' @param weights_sd Standard deviations of the 2D Gaussian window to use across `xvar` and `yvar` (default: c(10, 10)).
+#' @param kernel_bw Bandwidth for the kernel density estimator across `zvar`. If NULL, computed using [stats::bw.SJ()] (default: NULL).
+#' @param xvar X-axis variable, such as color difference (default: "abs_color_diff").
+#' @param yvar Y-axis variable, such as spatial difference (default: "abs_spat_diff").
+#' @param zvar Z-axis (dependent) variable, normally errors or biases (default: "color_bias_c").
+#' @param by A vector of grouping variable names (default: an empty vector).
+#' @param n The number of steps for each axis: c(x_steps, y_steps, z_steps) (default: c(90, 90, 181)).
+#' @param average If TRUE, the asymmetry is averaged for each x,y combination (default: TRUE).
+#' @param return_full_density If TRUE, returns the full data.table with density computed at each point (default: FALSE).
+#' @return A data.table with the grouping variables, x and y coordinates, and `delta` - the difference (asymmetry) in probability density for positive and negative values of `zvar`; or the full density data if `return_full_density` is TRUE.
+#' @export
+#' @importFrom stats as.formula bw.SJ density
+#' @import data.table
+#' @examples
+#' \dontrun{
+#' # Example with synthetic 2D data
+#' dt <- data.table(
+#'   abs_color_diff = runif(1000, 0, 90),
+#'   abs_spat_diff = runif(1000, 0, 90),
+#'   color_bias_c = rnorm(1000)
+#' )
+#'
+#' result <- density_asymmetry_2d(dt,
+#'   circ_space = c(180, 180, 180),
+#'   weights_sd = c(10, 10),
+#'   xvar = "abs_color_diff",
+#'   yvar = "abs_spat_diff",
+#'   zvar = "color_bias_c"
+#' )
+#' }
+# density_asymmetry_2d <- function(dt, circ_space = rep(180, 3), weights_sd = c(10, 10), kernel_bw = NULL, xvar = "abs_color_diff", yvar = "abs_spat_diff", zvar = "color_bias_c", by = c(), n = c(90, 90, 181), average = TRUE, return_full_density = FALSE) {
+#   x_val <- x <- x_sign <- delta <- `1` <- `-1` <- total <- ratio <- . <- NULL # due to NSE notes in R CMD check
+#
+#   if (length(circ_space) < 2 | length(circ_space) > 3) {
+#     stop("`circ_space` should have 2 or 3 elements")
+#   }
+#   if (length(circ_space) == 2) {
+#     message("`circ_space` is given for two dimensions, assuming that the z variable is in the same space as the x variable")
+#     circ_space[3] <- circ_space[1]
+#   }
+#
+#   if (length(weights_sd) != 2) {
+#     stop("weights_sd should be a 2-element vector")
+#   }
+#
+#   max_diss <- circ_space / 2
+#
+#   if (is.null(kernel_bw)) {
+#     kernel_bw <- stats::bw.SJ(dt[, get(zvar)])
+#   }
+#
+#   # Create grids for x and y coordinates
+#   x_grid <- seq(1, max_diss[1], length.out = n[1])
+#   y_grid <- seq(1, max_diss[2], length.out = n[2])
+#   z_grid <- seq(-max_diss[3], max_diss[3], length.out = n[3])
+#
+#   # Get data vectors
+#   x_data <- dt[, get(xvar)]
+#   y_data <- dt[, get(yvar)]
+#
+#   # Create coordinate matrices for all grid combinations
+#   x_coords <- rep(x_grid, each = n[2])
+#   y_coords <- rep(y_grid, times = n[1])
+#   n_grid_points <- length(x_coords)
+#
+#   # Compute all weights using matrix operations
+#   # Distance matrices: rows = data points, columns = grid points
+#   x_dist_matrix <- outer(x_data, x_coords, FUN = function(x, g) ((x - g) / weights_sd[1])^2)
+#   y_dist_matrix <- outer(y_data, y_coords, FUN = function(y, g) ((y - g) / weights_sd[2])^2)
+#
+#   # Combined 2D Gaussian weights
+#   weight_matrix <- exp(-0.5 * (x_dist_matrix + y_dist_matrix)) / (2 * pi * prod(weights_sd))
+#   weight_matrix <- sweep(weight_matrix, 2, colSums(weight_matrix), FUN = "/")
+#
+#   # Compute density for all grid points at once, grouped by 'by' variables
+#   res <- dt[, {
+#     z_data <- get(zvar)
+#
+#     # Pre-compute kernel base for all z_grid points and z_data combinations
+#     z_dist_matrix <- outer(z_grid, z_data, FUN = "-")
+#     kernel_base <- exp(-0.5 * (z_dist_matrix / kernel_bw)^2) / (sqrt(2 * pi) * kernel_bw)
+#
+#     # Get weights for this group
+#     group_weights <- weight_matrix[.I, , drop = FALSE]
+#
+#     # Compute all density values for this group using matrix multiplication
+#     # kernel_base: n[3] x n_data, group_weights: n_data x n_grid_points
+#     # Result: n[3] x n_grid_points
+#     all_density_vals <- kernel_base %*% group_weights
+#
+#     # Create result for this group
+#     res <- data.table(
+#       x = rep(z_grid, times = n_grid_points),
+#       y = as.vector(all_density_vals))
+#     res[,
+#       c(xvar,yvar) := .(rep(x_coords, each = n[3]),rep(y_coords, each = n[3]))
+#     ]
+#     res
+#   }, by = by]
+#
+#   res[, x_val := abs(x)]
+#   res[, x_sign := sign(x)]
+#
+#   if (return_full_density) {
+#     return(res)
+#   }
+#
+#   # Reshape to compute asymmetry
+#   res <- dcast(res,
+#     as.formula(paste(paste(by, collapse = "+"), paste(c(xvar, yvar, "x_val"), collapse = "+"), "x_sign", sep = "~")),
+#     value.var = "y"
+#   )
+#   res[, delta := `1` - `-1`]
+#   res[, total := `1` + `-1`]
+#   res[, ratio := `1` / `-1`]
+#
+#   if (average) {
+#     res <- res[!is.na(delta), .(delta = sum(delta) / sum(total)), by = c(xvar, yvar, by)]
+#   }
+#
+#   setattr(res, "kernel_bw", kernel_bw)
+#
+#   res
+# }

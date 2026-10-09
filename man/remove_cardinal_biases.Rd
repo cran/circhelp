@@ -73,13 +73,23 @@ Remove cardinal biases
 If the \code{bias_type} is set to \code{fit}, the function computes the cardinal biases in the following way:
 \enumerate{
 \item Create two sets of bins, splitting the stimuli vector into bins centered at cardinal and at oblique directions.
-\item For each set of bins, fit a nth-degree polynomial for the responses in each bin, optionally allowing the distribution of responses to vary in width as a function of distance to the nearest cardinal (regardless of whether the bins are centered at the cardinal or at the oblique, the width of the response distribution usually increases as the distance to cardinals increase).
+\item For each set of bins, fit a penalised spline (P-spline — a regression spline with a roughness
+penalty that controls smoothness) for the mean response in each bin. Optionally (see \code{var_sigma}),
+the response variability (SD) is modelled jointly via a log-linear model, allowing the response distribution to vary in
+width as a function of distance to the nearest cardinal (regardless of whether the bins are centered
+at the cardinal or at the oblique, the width of the response distribution usually increases as the
+distance to cardinals increases).
 \item Choose the best-fitting model between the one using cardinal and the one using oblique bins.
+\item Optionally (see \code{reassign_at_boundaries}), reassign observations near bin boundaries to the
+bin whose fitted model best describes them, iterating until convergence.
 \item Compute the residuals of the best-fitting model - that's your bias-corrected error - and the biases (see below).
 }
 The bias is computed by flipping the sign of errors when the average predicted error is negative, so, that, for example, if on average the responses are shifted clockwise relative to the true values, the trial-by-trial error would count as bias when it is also shifted clockwise.
 
 If \code{bias_type} is set to \code{obl} or \code{card}, only one set of bins is used, centred at cardinal or oblique angles, respectively.
+
+For additional examples see the help vignette:
+\code{vignette("cardinal_biases", package = "circhelp")}
 }
 \examples{
 
@@ -89,6 +99,7 @@ If \code{bias_type} is set to \code{obl} or \code{card}, only one set of bins is
 ex_data <- Pascucci_et_al_2019_data[observer == 4, ]
 remove_cardinal_biases(ex_data$err, ex_data$orientation, plots = "show")
 
+\donttest{
 # Data in motion domain from Bae & Luck (2018, Neuroimage),
 # https://osf.io/2h6w9/
 ex_data_bae <- Bae_Luck_2018_data[subject_Num == unique(subject_Num)[5], ]
@@ -112,13 +123,14 @@ remove_cardinal_biases(ex_data_bae$err, ex_data_bae$TargetDirection,
   reassign_at_boundaries = FALSE, poly_deg = 8,
   init_outliers = abs(ex_data_bae$err) > 60
 )
+}
 
 }
 \references{
 {
 \itemize{
 \item Chetverikov, A., & Jehee, J. F. M. (2023). Motion direction is represented as a bimodal probability distribution in the human visual cortex. Nature Communications, 14(7634). \doi{10.1038/s41467-023-43251-w}
-\item van Bergen, R. S., Ma, W. J., Pratte, M. S., & Jehee, J. F. M. (2015). Sensory uncertainty decoded from visual cortex predicts behavior. Nature Neuroscience, 18(12), 1728–1730. \doi{10.1038/nn.4150}
+\item van Bergen, R. S., Ma, W. J., Pratte, M. S., & Jehee, J. F. M. (2015). Sensory uncertainty decoded from visual cortex predicts behavior. Nature Neuroscience, 18(12), 1728-1730. \doi{10.1038/nn.4150}
 }
 }
 }
